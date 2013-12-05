@@ -151,8 +151,8 @@ class db_manager(threading.Thread):
                 print self.name, 'Data queue is empty. Still wait ...'
                 continue
             for item in data:
-                #if item[1] != current_beijing_date:
-                #    continue
+                if item[1] != current_beijing_date:
+                    continue
                 key = pickle.dumps((item[0], item[2]))
                 db[key] = data[item]
         for name in self.db_dict:
