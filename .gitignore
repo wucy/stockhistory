@@ -35,5 +35,12 @@ nosetests.xml
 .project
 .pydevproject
 
-# Temp Data
-stock_data/*
+#swap and tmp
+*.swp
+*~
+
+#data
+data
+
+#tester
+tester/
