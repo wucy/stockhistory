@@ -6,9 +6,9 @@ This is a multi-thread stock price crawler via Sina Finance API
 
 how to use the crawler
 ----------------------
-Run the following command:
+For crawling Shanghai & Shenzhen markets, run the following command:
 ```
-python stock_crawler.py
+python stock_crawler_chn.py
 ```
 
 

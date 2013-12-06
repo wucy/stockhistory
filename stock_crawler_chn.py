@@ -3,11 +3,13 @@
 PAGESIZE = 70
 WEB_TIME_OUT = 10
 DATABASE_TIME_OUT = 10
-TOT_PARAMS = 33
 DATA_DIR = './data/stock_data/'
 
+#API
+TOT_PARAMS = 33
+
 #for mysql
-DB_NAME = 'stockchn'
+DB_NAME = 'stock_chn'
 
 import urllib2
 import time
@@ -22,18 +24,14 @@ import MySQLdb
 import Queue
 
 
-
-MONITOR_DETAILS = "SELECT COUNT(*) AS TOTAL FROM `%s`"
-COUNT_DETAILS = "SELECT COUNT(*) AS TOTAL FROM `%s` WHERE `stock_id` = '%s' AND `timestamp` = '%s'"
-                    
-
-INSERT_DETAILS = "INSERT INTO `stockchn`.`%s` (`id`, `stock_id`, `timestamp`, `open_price`, `yesterday_closing_price`, `now_price`, `high_price`, `low_price`, `now_buy_price`, `now_sell_price`, `volume`, `amount`, `buy_1_vol`, `buy_1_price`, `buy_2_vol`, `buy_2_price`, `buy_3_vol`, `buy_3_price`, `buy_4_vol`, `buy_4_price`, `buy_5_vol`, `buy_5_price`, `sell_1_vol`, `sell_1_price`, `sell_2_vol`, `sell_2_price`, `sell_3_vol`, `sell_3_price`, `sell_4_vol`, `sell_4_price`, `sell_5_vol`, `sell_5_price`) VALUES (NULL, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')"
+INSERT_DETAILS = "INSERT IGNORE INTO `stockchn`.`%s` (`id`, `stock_id`, `timestamp`, `unique_token`, `open_price`, `yesterday_closing_price`, `now_price`, `high_price`, `low_price`, `now_buy_price`, `now_sell_price`, `volume`, `amount`, `buy_1_vol`, `buy_1_price`, `buy_2_vol`, `buy_2_price`, `buy_3_vol`, `buy_3_price`, `buy_4_vol`, `buy_4_price`, `buy_5_vol`, `buy_5_price`, `sell_1_vol`, `sell_1_price`, `sell_2_vol`, `sell_2_price`, `sell_3_vol`, `sell_3_price`, `sell_4_vol`, `sell_4_price`, `sell_5_vol`, `sell_5_price`) VALUES (NULL, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')"
 
 TABLE_DETAILS = """
 (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `stock_id` tinytext COLLATE utf8_unicode_ci NOT NULL,
   `timestamp` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00' ON UPDATE CURRENT_TIMESTAMP,
+  `unique_token` tinytext COLLATE utf8_unicode_ci NOT NULL,
   `open_price` float NOT NULL,
   `yesterday_closing_price` float NOT NULL,
   `now_price` float NOT NULL,
@@ -63,8 +61,9 @@ TABLE_DETAILS = """
   `sell_4_price` float NOT NULL,
   `sell_5_vol` bigint(20) NOT NULL,
   `sell_5_price` float NOT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci AUTO_INCREMENT=1
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_token` (`unique_token`(30))
+) ENGINE=InnoDB  DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci AUTO_INCREMENT=1
 """
 
 def data_parser(data, is_paramdict = False):
@@ -203,7 +202,8 @@ class mysql_db_manager(threading.Thread):
             try:
                 init_table_sql = 'create table if not exists `' + table_name + '` ' + TABLE_DETAILS.translate(None, '\n')
                 self.cursor.execute(init_table_sql)
-            except:
+            except Exception, e:
+                print e
                 print self.name, 'Error in Table initialization!'
             
             try:
@@ -217,18 +217,8 @@ class mysql_db_manager(threading.Thread):
                     if item[1] != current_beijing_date:
                         continue
                     timestamp = ' '.join([item[1], item[2]])
-                    content = [table_name, item[0], timestamp]
-
-                    count_sql = COUNT_DETAILS % tuple(content)
-
-                    self.cursor.execute(count_sql)
-                    row = self.cursor.fetchone()
-                    #print int(row[0])
-                    if int(row[0]) > 0:
-                        continue
+                    content = [table_name, item[0], timestamp, item[0] + '@' + timestamp]
                     content.extend(list(data[item]))
-                    #print content
-                    #print data[item]
                     insert_sql = INSERT_DETAILS % tuple(content)
                     self.cursor.execute(insert_sql)
                     self.conn.commit()
@@ -247,7 +237,7 @@ class mysql_db_manager(threading.Thread):
     
     def monitor(self):
         print 'TOTAL_DB =', len(self.table_dict)
-   
+
 class naive_db_manager(threading.Thread):
     def __init__(self, name, io_queue):
         threading.Thread.__init__(self)
@@ -345,11 +335,11 @@ def main():
     code_list.extend(read_code('sh.list', 'sh'))
     print 'Get', len(code_list), 'stock id from lists'
    
-    io_queue = Queue.Queue()
+    io_queue = Queue.Queue(maxsize = 1e3)
 
     db_task_name = 'db_manager'
-    #db_task = naive_db_manager(db_task_name, io_queue)
-    db_task = mysql_db_manager(db_task_name, io_queue)
+    db_task = naive_db_manager(db_task_name, io_queue)
+    #db_task = mysql_db_manager(db_task_name, io_queue)
     db_task.setDaemon(True)
     db_task.start()
 
