@@ -6,7 +6,8 @@ DATABASE_TIME_OUT = 10
 TOT_PARAMS = 33
 DATA_DIR = './data/stock_data/'
 
-
+#for mysql
+DB_NAME = 'stockchn'
 
 import urllib2
 import time
@@ -15,20 +16,56 @@ import threading
 import shelve
 import pickle
 import os
+import MySQLdb
+
 
 import Queue
 
 
 
+MONITOR_DETAILS = "SELECT COUNT(*) AS TOTAL FROM `%s`"
+COUNT_DETAILS = "SELECT COUNT(*) AS TOTAL FROM `%s` WHERE `stock_id` = '%s' AND `timestamp` = '%s'"
+                    
 
-def ensure_dir(file_name):
-    root_dir = os.path.dirname(file_name)
-    if root_dir == '':
-        root_dir == '.'
-    if not os.path.exists(root_dir):
-        ensure_dir(root_dir)
-        os.makedirs(root_dir)
+INSERT_DETAILS = "INSERT INTO `stockchn`.`%s` (`id`, `stock_id`, `timestamp`, `open_price`, `yesterday_closing_price`, `now_price`, `high_price`, `low_price`, `now_buy_price`, `now_sell_price`, `volume`, `amount`, `buy_1_vol`, `buy_1_price`, `buy_2_vol`, `buy_2_price`, `buy_3_vol`, `buy_3_price`, `buy_4_vol`, `buy_4_price`, `buy_5_vol`, `buy_5_price`, `sell_1_vol`, `sell_1_price`, `sell_2_vol`, `sell_2_price`, `sell_3_vol`, `sell_3_price`, `sell_4_vol`, `sell_4_price`, `sell_5_vol`, `sell_5_price`) VALUES (NULL, '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')"
 
+TABLE_DETAILS = """
+(
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `stock_id` tinytext COLLATE utf8_unicode_ci NOT NULL,
+  `timestamp` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00' ON UPDATE CURRENT_TIMESTAMP,
+  `open_price` float NOT NULL,
+  `yesterday_closing_price` float NOT NULL,
+  `now_price` float NOT NULL,
+  `high_price` float NOT NULL,
+  `low_price` float NOT NULL,
+  `now_buy_price` float NOT NULL,
+  `now_sell_price` float NOT NULL,
+  `volume` bigint(20) NOT NULL,
+  `amount` bigint(20) NOT NULL,
+  `buy_1_vol` bigint(20) NOT NULL,
+  `buy_1_price` float NOT NULL,
+  `buy_2_vol` bigint(20) NOT NULL,
+  `buy_2_price` float NOT NULL,
+  `buy_3_vol` bigint(20) NOT NULL,
+  `buy_3_price` float NOT NULL,
+  `buy_4_vol` bigint(20) NOT NULL,
+  `buy_4_price` float NOT NULL,
+  `buy_5_vol` bigint(20) NOT NULL,
+  `buy_5_price` float NOT NULL,
+  `sell_1_vol` bigint(20) NOT NULL,
+  `sell_1_price` float NOT NULL,
+  `sell_2_vol` bigint(20) NOT NULL,
+  `sell_2_price` float NOT NULL,
+  `sell_3_vol` bigint(20) NOT NULL,
+  `sell_3_price` float NOT NULL,
+  `sell_4_vol` bigint(20) NOT NULL,
+  `sell_4_price` float NOT NULL,
+  `sell_5_vol` bigint(20) NOT NULL,
+  `sell_5_price` float NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci AUTO_INCREMENT=1
+"""
 
 def data_parser(data, is_paramdict = False):
     """
@@ -124,7 +161,94 @@ def data_parser(data, is_paramdict = False):
     return ret
 
 
-class db_manager(threading.Thread):
+def ensure_dir(file_name):
+    root_dir = os.path.dirname(file_name)
+    if root_dir == '':
+        root_dir == '.'
+    if not os.path.exists(root_dir):
+        ensure_dir(root_dir)
+        os.makedirs(root_dir)
+
+
+class mysql_db_manager(threading.Thread):
+    def __init__(self, name, io_queue):
+        global DB_NAME
+        threading.Thread.__init__(self)
+        self.name = name
+        self.io_queue = io_queue
+        self.is_stop = False
+        self.table_dict = set()
+        try:
+            self.conn = MySQLdb.connect(host = 'localhost', user = 'root', passwd='' , port = 3306)
+            self.cursor = self.conn.cursor()
+            self.cursor.execute('create database if not exists ' + DB_NAME) 
+            self.conn.select_db(DB_NAME)
+        except:
+            print self.name, 'Error in initializing Mysql database!'
+            exit()
+
+
+    def run(self):
+        global DATA_DIR
+        global DATABASE_TIME_OUT
+        global DB_NAME
+        global TABEL_DETAILS
+        global INSERT_DETAILS
+
+        while not self.is_stop:
+            current_beijing_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=+8)).strftime('%Y-%m-%d')
+            table_name = 'table' + current_beijing_date.translate(None, '-')
+            self.table_dict.add(table_name)
+            init_table_sql = None
+            try:
+                init_table_sql = 'create table if not exists `' + table_name + '` ' + TABLE_DETAILS.translate(None, '\n')
+                self.cursor.execute(init_table_sql)
+            except:
+                print self.name, 'Error in Table initialization!'
+            
+            try:
+                data = self.io_queue.get(True, DATABASE_TIME_OUT)
+            except:
+                print self.name, 'Data queue is empty. Still wait ...'
+                continue
+
+            try:
+                for item in data:
+                    if item[1] != current_beijing_date:
+                        continue
+                    timestamp = ' '.join([item[1], item[2]])
+                    content = [table_name, item[0], timestamp]
+
+                    count_sql = COUNT_DETAILS % tuple(content)
+
+                    self.cursor.execute(count_sql)
+                    row = self.cursor.fetchone()
+                    #print int(row[0])
+                    if int(row[0]) > 0:
+                        continue
+                    content.extend(list(data[item]))
+                    #print content
+                    #print data[item]
+                    insert_sql = INSERT_DETAILS % tuple(content)
+                    self.cursor.execute(insert_sql)
+                    self.conn.commit()
+            except Exception, e:
+                print e
+                print self.name, 'Error in data insertion to database!'
+        
+        self.cursor.close()
+        self.conn.close()
+
+        print self.name, 'is finished.'
+
+    def stop(self):
+        print 'Try to stop', self.name, '...'
+        self.is_stop = True
+    
+    def monitor(self):
+        print 'TOTAL_DB =', len(self.table_dict)
+   
+class naive_db_manager(threading.Thread):
     def __init__(self, name, io_queue):
         threading.Thread.__init__(self)
         self.name = name
@@ -224,7 +348,8 @@ def main():
     io_queue = Queue.Queue()
 
     db_task_name = 'db_manager'
-    db_task = db_manager(db_task_name, io_queue)
+    #db_task = naive_db_manager(db_task_name, io_queue)
+    db_task = mysql_db_manager(db_task_name, io_queue)
     db_task.setDaemon(True)
     db_task.start()
 
@@ -266,4 +391,6 @@ def main():
 
 if __name__=='__main__':
     main()
+
+
 
