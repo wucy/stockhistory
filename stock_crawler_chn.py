@@ -1,9 +1,9 @@
-#/usr/bin/env python
+#!/usr/bin/env python
 
-PAGESIZE = 100
-WEB_TIME_OUT = 3
+PAGESIZE = 700
+WEB_TIME_OUT = 5
 DM_TIME_OUT = 10
-DATA_DIR = './data/yueliang/'
+DATA_DIR = './data/air/'
 DB_NAME = 'chn.db'
 
 #API
@@ -84,6 +84,9 @@ def ensure_dir(file_name):
         os.makedirs(root_dir)
 
 
+def get_beijing_time():
+    return datetime.datetime.utcnow() + datetime.timedelta(hours =+ 8)
+
 class sqlite_db_manager(threading.Thread):
     def __init__(self, name, io_queue):
         threading.Thread.__init__(self)
@@ -99,15 +102,18 @@ class sqlite_db_manager(threading.Thread):
         global CREATE_TABLE_SQL
         global INSERT_SQL
 
-        ensure_dir(DATA_DIR)
+        file_name = DATA_DIR + '/' + DB_NAME
+        ensure_dir(file_name)
         try:
-            self.conn = sqlite3.connect(DATA_DIR + '/' + DB_NAME)
+            self.conn = sqlite3.connect(file_name)
             self.cursor = self.conn.cursor()
         except Exception, e:
             print e
             exit()
-        while not self.is_stop:
-            current_beijing_date = (datetime.datetime.utcnow() + datetime.timedelta(hours =+ 8)).strftime('%Y-%m-%d')
+        while (not self.is_stop) or self.io_queue.qsize() != 0:
+            if self.is_stop:
+                print 'Waiting items in I/O queue:', self.io_queue.qsize(), time.ctime()
+            current_beijing_date = get_beijing_time().strftime('%Y-%m-%d')
             table_name = 'table' + current_beijing_date.translate(None, '-')
             self.table_dict.add(table_name)
             init_table_sql = None
@@ -121,7 +127,7 @@ class sqlite_db_manager(threading.Thread):
                 #print self.io_queue.qsize()
                 data = self.io_queue.get(True, DM_TIME_OUT)
             except:
-                print self.name, 'Data queue is empty. Still wait ...'
+                print self.name, 'Data queue is empty. Still wait ...', time.ctime()
                 continue
             try:
                 post_data = []
@@ -137,7 +143,7 @@ class sqlite_db_manager(threading.Thread):
                 self.conn.commit()
             except Exception, e:
                 print e
-                print self.name, 'Error in data insertion to database!'
+                print self.name, 'Error in data insertion to database!', time.ctime()
         self.cursor.close()
         self.conn.close()
         print self.name, 'is finished.'
@@ -147,11 +153,22 @@ class sqlite_db_manager(threading.Thread):
         self.is_stop = True
     
     def monitor(self):
-        print 'QUEUE_SIZE', self.io_queue.qsize()
+        print 'QUEUE_SIZE =', self.io_queue.qsize()
         print 'TOTAL_TABLE =', len(self.table_dict), '{',
         for name in self.table_dict:
             print name,
         print '}'
+
+def is_trade_time():
+    current_beijing_hms = get_beijing_time().strftime('%H:%M:%S')
+    if current_beijing_hms < '08:40:00':
+        return False
+    if current_beijing_hms > '11:50:00' and current_beijing_hms < '12:40:00':
+        return False
+    if current_beijing_hms > '15:20:00':
+        return False
+    return True
+ 
 
 class sub_crawler(threading.Thread):
     def __init__ (self, name, code_list, io_queue):
@@ -165,6 +182,9 @@ class sub_crawler(threading.Thread):
         print self.name, 'starts!'
         code_join = ','.join(self.code_list)
         while not self.is_stop:
+            if not is_trade_time():
+                time.sleep(5)
+                continue
             good = True
             content = ''
             try:
@@ -173,7 +193,7 @@ class sub_crawler(threading.Thread):
                 #end = time.time()
                 #print end - sta
             except:
-                print self.name, 'Network Error! Now try again ...'
+                print self.name, 'Network Timeout! Now try again ...', time.ctime()
                 good = False
             if not good:
                 continue
